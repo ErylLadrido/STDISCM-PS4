@@ -45,7 +45,7 @@ grpc::Status OCRServiceImpl::ProcessImages(
         OCRProcessor* processor = m_processors[processorIndex].get();
         
         // Enqueue the OCR task
-        m_threadPool.enqueue([stream, processor, imageId, filename, imageData]() {
+        m_threadPool.enqueue([this, stream, processor, imageId, filename, imageData]() {
             std::string extractedText = processor->processImage(imageData, filename);
             
             ocr::OCRResult result;
@@ -57,14 +57,20 @@ grpc::Status OCRServiceImpl::ProcessImages(
                 result.set_error_message("OCR failed to extract text");
             }
             
-            // Send result back to client
-            if (!stream->Write(result)) {
-                std::cerr << "Failed to send result for image: " << imageId << std::endl;
-            } else {
-                std::cout << "Sent result for image: " << imageId << std::endl;
+            // PROTECT STREAM WRITE WITH MUTEX
+            {
+                std::lock_guard<std::mutex> lock(m_streamMutex);
+                if (!stream->Write(result)) {
+                    std::cerr << "Failed to send result for image: " << imageId << std::endl;
+                } else {
+                    std::cout << "Sent result for image: " << imageId << std::endl;
+                }
             }
         });
     }
+    
+    // Wait for all pending tasks to complete before returning
+    m_threadPool.waitAll();
     
     std::cout << "Client disconnected" << std::endl;
     return grpc::Status::OK;

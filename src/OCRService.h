@@ -7,6 +7,7 @@
 #include <grpcpp/grpcpp.h>
 #include <memory>
 #include <atomic>
+#include <mutex>
 
 class OCRServiceImpl final : public ocr::OCRService::Service {
 public:
@@ -22,6 +23,7 @@ private:
     ThreadPool m_threadPool;
     std::atomic<int> m_nextProcessorIndex;
     std::vector<std::unique_ptr<OCRProcessor>> m_processors;
+    std::mutex m_streamMutex; 
 };
 
 #endif // OCRSERVICE_H

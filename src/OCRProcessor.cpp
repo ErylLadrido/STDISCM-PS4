@@ -36,6 +36,12 @@ std::string OCRProcessor::processImage(const std::string& imageData, const std::
         return "";
     }
     
+    // Check if image data is valid
+    if (imageData.empty()) {
+        std::cerr << "Empty image data for: " << filename << std::endl;
+        return "";
+    }
+    
     try {
         // Convert string data to Pix image
         Pix* cleanedImage = cleanImage(
@@ -44,7 +50,7 @@ std::string OCRProcessor::processImage(const std::string& imageData, const std::
         );
         
         if (!cleanedImage) {
-            std::cerr << "Failed to preprocess image: " << filename << std::endl;
+            std::cerr << "Failed to preprocess image (possibly corrupt): " << filename << std::endl;
             return "";
         }
         
