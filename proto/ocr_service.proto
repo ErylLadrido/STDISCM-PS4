@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package ocr;
+
+// Service definition for OCR
+service OCRService {
+  // Stream-based RPC: client sends images, server streams back results
+  rpc ProcessImages(stream ImageRequest) returns (stream OCRResult);
+}
+
+// Message for sending an image to the server
+message ImageRequest {
+  string image_id = 1;        // Unique identifier for this image
+  bytes image_data = 2;       // Raw image bytes
+  string filename = 3;        // Original filename
+}
+
+// Message for receiving OCR results from the server
+message OCRResult {
+  string image_id = 1;        // Matches the request image_id
+  string extracted_text = 2;  // The OCR result
+  bool success = 3;           // Whether OCR succeeded
+  string error_message = 4;   // Error message if failed
+}
