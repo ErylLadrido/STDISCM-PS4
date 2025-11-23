@@ -30,7 +30,7 @@ ImageResultWidget::ImageResultWidget(const QString& filename, QWidget* parent)
     m_textLabel->setAlignment(Qt::AlignTop | Qt::AlignLeft);
     m_textLabel->setMinimumHeight(80);
     m_textLabel->setMaximumHeight(200);
-    m_textLabel->setStyleSheet("background-color: #f0f0f0; padding: 5px; border: 1px solid #ccc;");
+    m_textLabel->setStyleSheet("background-color: #000000; padding: 5px; border: 1px solid #ccc;");
 
     layout->addWidget(m_filenameLabel);
     layout->addWidget(m_statusLabel);

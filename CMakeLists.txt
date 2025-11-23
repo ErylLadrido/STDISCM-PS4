@@ -165,6 +165,49 @@ target_include_directories(OCRClient PRIVATE
 # Ensure OCRClient can see the generated headers
 add_dependencies(OCRClient ocr_proto)
 
+
+# OCR Server executable
+add_executable(OCRServer
+    src/OCRServer.cpp
+    src/OCRService.cpp
+    src/OCRProcessor.cpp
+    src/ThreadPool.cpp
+)
+
+target_link_libraries(OCRServer
+    PRIVATE
+        ocr_proto
+        gRPC::grpc++
+        gRPC::grpc
+        protobuf::libprotobuf
+)
+
+target_include_directories(OCRServer PRIVATE 
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${PROTO_BINARY_DIR}
+)
+
+# Find Tesseract and Leptonica for server (macOS specific)
+find_library(TESSERACT_LIB NAMES tesseract)
+find_library(LEPTONICA_LIB NAMES leptonica)
+
+if(TESSERACT_LIB AND LEPTONICA_LIB)
+    target_link_libraries(OCRServer PRIVATE ${TESSERACT_LIB} ${LEPTONICA_LIB})
+else()
+    message(WARNING "Tesseract and/or Leptonica not found. Server may not build correctly.")
+endif()
+
+# Include directories for Tesseract/Leptonica (adjust paths as needed)
+target_include_directories(OCRServer PRIVATE
+    /opt/homebrew/include
+    /usr/local/include
+)
+
+# Ensure OCRServer can see the generated headers
+add_dependencies(OCRServer ocr_proto)
+# Ensure OCRServer can see the generated headers
+add_dependencies(OCRServer ocr_proto)
+
 # Set the startup project for Visual Studio
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT OCRClient)
 
