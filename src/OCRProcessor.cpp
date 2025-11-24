@@ -7,6 +7,9 @@ OCRProcessor::OCRProcessor() : m_initialized(false) {
 
 OCRProcessor::~OCRProcessor() {
     if (m_tesseract) {
+        // More aggressive cleanup to prevent Tesseract memory leaks
+        m_tesseract->Clear();
+        m_tesseract->ClearPersistentCache();
         m_tesseract->End();
     }
 }
@@ -19,13 +22,17 @@ bool OCRProcessor::initialize() {
         return false;
     }
     
-    // Configure Tesseract for better accuracy (from your working code)
-    m_tesseract->SetPageSegMode(tesseract::PSM_SINGLE_WORD);
-    m_tesseract->SetVariable("tessedit_char_whitelist", "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789");
+    // Configure Tesseract - simplified configuration to reduce memory issues
+    m_tesseract->SetPageSegMode(tesseract::PSM_SINGLE_BLOCK);
+    
+    // Disable adaptive recognition and dictionaries to reduce memory usage
     m_tesseract->SetVariable("load_system_dawg", "0");
-    m_tesseract->SetVariable("load_freq_dawg", "0");
-    m_tesseract->SetVariable("textord_min_linesize", "2.0");
-    m_tesseract->SetVariable("tessedit_ocr_engine_mode", "1");
+    m_tesseract->SetVariable("load_freq_dawg", "0"); 
+    m_tesseract->SetVariable("load_unambig_dawg", "0");
+    m_tesseract->SetVariable("load_punc_dawg", "0");
+    m_tesseract->SetVariable("load_number_dawg", "0");
+    m_tesseract->SetVariable("load_fixed_length_dawgs", "0");
+    m_tesseract->SetVariable("load_bigram_dawg", "0");
     
     m_initialized = true;
     return true;
@@ -33,26 +40,31 @@ bool OCRProcessor::initialize() {
 
 std::string OCRProcessor::processImage(const std::string& imageData, const std::string& filename) {
     if (!m_initialized) {
+        std::cerr << "OCRProcessor not initialized for: " << filename << std::endl;
         return "";
     }
     
-    // Check if image data is valid
     if (imageData.empty()) {
         std::cerr << "Empty image data for: " << filename << std::endl;
         return "";
     }
     
+    Pix* cleanedImage = nullptr;
+    
     try {
         // Convert string data to Pix image
-        Pix* cleanedImage = cleanImage(
+        cleanedImage = cleanImage(
             reinterpret_cast<const unsigned char*>(imageData.data()), 
             imageData.size()
         );
         
         if (!cleanedImage) {
-            std::cerr << "Failed to preprocess image (possibly corrupt): " << filename << std::endl;
+            std::cerr << "Failed to preprocess image: " << filename << std::endl;
             return "";
         }
+        
+        // Clear Tesseract state before processing new image
+        m_tesseract->Clear();
         
         // Perform OCR
         m_tesseract->SetImage(cleanedImage);
@@ -63,48 +75,61 @@ std::string OCRProcessor::processImage(const std::string& imageData, const std::
         delete[] outText;
         pixDestroy(&cleanedImage);
         
-        // Post-process text
+        // Clear adaptive classifier to prevent memory buildup
+        m_tesseract->ClearAdaptiveClassifier();
+        
         return postProcessText(extractedText);
         
     } catch (const std::exception& e) {
         std::cerr << "Error processing image " << filename << ": " << e.what() << std::endl;
+        if (cleanedImage) {
+            pixDestroy(&cleanedImage);
+        }
         return "";
     }
 }
 
 Pix* OCRProcessor::cleanImage(const unsigned char* imageData, size_t dataSize) {
-    // Read image from memory
     Pix* pix = pixReadMem(imageData, dataSize);
     if (!pix) {
         return nullptr;
     }
     
-    Pix* processed = pix;
+    Pix* current = pix;
+    Pix* next = nullptr;
     
     // Convert to grayscale if needed
-    if (pixGetDepth(processed) != 8) {
-        Pix* temp = pixConvertTo8(processed, 0);
-        if (temp) {
-            pixDestroy(&processed);
-            processed = temp;
+    if (pixGetDepth(current) != 8) {
+        next = pixConvertTo8(current, 0);
+        if (!next) {
+            pixDestroy(&current);
+            return nullptr;
+        }
+        pixDestroy(&current);
+        current = next;
+    }
+    
+    // Only apply processing to reasonably sized images
+    l_int32 width, height;
+    pixGetDimensions(current, &width, &height, NULL);
+    
+    if (width > 100 && height > 100) {
+        // Apply noise reduction
+        next = pixMedianFilter(current, 1, 1);
+        if (next) {
+            pixDestroy(&current);
+            current = next;
+        }
+        
+        // Apply thresholding
+        next = pixThresholdToBinary(current, 128);
+        if (next) {
+            pixDestroy(&current);
+            current = next;
         }
     }
     
-    // Simple noise reduction
-    Pix* denoised = pixMedianFilter(processed, 1, 1);
-    if (denoised) {
-        pixDestroy(&processed);
-        processed = denoised;
-    }
-    
-    // Simple threshold
-    Pix* binary = pixThresholdToBinary(processed, 128);
-    if (binary) {
-        pixDestroy(&processed);
-        processed = binary;
-    }
-    
-    return processed;
+    return current;
 }
 
 std::string OCRProcessor::postProcessText(const std::string& text) {
@@ -113,42 +138,17 @@ std::string OCRProcessor::postProcessText(const std::string& text) {
     std::string result = text;
     
     // Remove leading/trailing whitespace
-    result.erase(0, result.find_first_not_of(" \t\n\r\f\v"));
-    result.erase(result.find_last_not_of(" \t\n\r\f\v") + 1);
+    size_t start = result.find_first_not_of(" \t\n\r\f\v");
+    if (start == std::string::npos) return "";
     
-    if (result.empty()) return "";
-    
-    // Common OCR error patterns to fix
-    std::vector<std::pair<std::string, std::string>> replacements = {
-        {"|", "l"}, {"[", "l"}, {"]", "l"}, {"`", "'"}, {"''", "\""},
-        {" - ", "-"}, {" ,", ","}, {" .", "."}, {"\\", "l"}, {"//", "l"},
-        {"0", "o"}, {"1", "l"}, {"5", "s"}
-    };
-    
-    // Apply replacements
-    for (const auto& replacement : replacements) {
-        size_t pos = 0;
-        while ((pos = result.find(replacement.first, pos)) != std::string::npos) {
-            result.replace(pos, replacement.first.length(), replacement.second);
-            pos += replacement.second.length();
-        }
-    }
-    
-    // Remove isolated punctuation at start/end
-    if (!result.empty()) {
-        std::string punctuation = ".,!?*-|`'\"";
-        while (!result.empty() && punctuation.find(result[0]) != std::string::npos) {
-            result.erase(0, 1);
-        }
-        while (!result.empty() && punctuation.find(result.back()) != std::string::npos) {
-            result.pop_back();
-        }
-    }
+    size_t end = result.find_last_not_of(" \t\n\r\f\v");
+    result = result.substr(start, end - start + 1);
     
     // Remove multiple consecutive spaces
     size_t pos = 0;
     while ((pos = result.find("  ", pos)) != std::string::npos) {
         result.replace(pos, 2, " ");
+        pos += 1;
     }
     
     return result;

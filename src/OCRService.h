@@ -8,6 +8,7 @@
 #include <memory>
 #include <atomic>
 #include <mutex>
+#include <thread>
 
 class OCRServiceImpl final : public ocr::OCRService::Service {
 public:
@@ -20,10 +21,14 @@ public:
     ) override;
 
 private:
+    void memoryCleanupTask();
+    
     ThreadPool m_threadPool;
     std::atomic<int> m_nextProcessorIndex;
     std::vector<std::unique_ptr<OCRProcessor>> m_processors;
-    std::mutex m_streamMutex; 
+    std::mutex m_streamMutex;
+    std::thread m_cleanupThread;
+    std::atomic<bool> m_cleanupRunning;
 };
 
 #endif // OCRSERVICE_H
