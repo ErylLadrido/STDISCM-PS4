@@ -1,5 +1,6 @@
 #include "OCRClient.h"
 #include <QDebug>
+#include <chrono>
 
 OCRClient::OCRClient(const QString& serverAddress, QObject* parent)
     : QObject(parent)
@@ -44,6 +45,9 @@ void OCRClient::start() {
         // Start reader thread
         m_readerThread = std::thread(&OCRClient::processResults, this);
 
+        // Start writer thread
+        m_writerThread = std::thread(&OCRClient::processSendQueue, this);
+
         qDebug() << "OCR Client started and connected to" << m_serverAddress;
 
     }
@@ -68,7 +72,11 @@ void OCRClient::stop() {
             m_stream->WritesDone();
         }
 
-        // Wait for reader thread to finish
+        // Wait for threads to finish
+        if (m_writerThread.joinable()) {
+            m_writerThread.join();
+        }
+
         if (m_readerThread.joinable()) {
             m_readerThread.join();
         }
@@ -108,24 +116,66 @@ void OCRClient::sendImage(const QString& imageId, const QString& filename, const
         request.set_filename(filename.toStdString());
         request.set_image_data(imageData.constData(), imageData.size());
 
-        bool success = m_stream->Write(request);
-        if (!success) {
-            qDebug() << "Failed to write image to stream:" << imageId;
-            m_connected = false;
-            emit connectionStatusChanged(false);
-            emit connectionError("Lost connection to server");
+        // Add to queue instead of blocking
+        {
+            std::lock_guard<std::mutex> lock(m_queueMutex);
+            m_sendQueue.push(request);
         }
-        else {
-            qDebug() << "Sent image:" << imageId;
-        }
+
+        qDebug() << "Queued image:" << imageId;
 
     }
     catch (const std::exception& e) {
-        qDebug() << "Error sending image:" << e.what();
-        m_connected = false;
-        emit connectionStatusChanged(false);
-        emit connectionError(QString("Send error: %1").arg(e.what()));
+        qDebug() << "Error queueing image:" << e.what();
     }
+}
+
+void OCRClient::processSendQueue() {
+    qDebug() << "Writer thread started";
+
+    while (m_running) {
+        ocr::ImageRequest request;
+        bool hasRequest = false;
+
+        // Check if there's anything to send
+        {
+            std::lock_guard<std::mutex> lock(m_queueMutex);
+            if (!m_sendQueue.empty()) {
+                request = m_sendQueue.front();
+                m_sendQueue.pop();
+                hasRequest = true;
+            }
+        }
+
+        if (hasRequest) {
+            try {
+                bool success = m_stream->Write(request);
+                if (!success) {
+                    qDebug() << "Failed to write image to stream";
+                    m_connected = false;
+                    emit connectionStatusChanged(false);
+                    emit connectionError("Lost connection to server");
+                    break;
+                }
+                else {
+                    qDebug() << "Sent image:" << QString::fromStdString(request.image_id());
+                }
+            }
+            catch (const std::exception& e) {
+                qDebug() << "Error sending image:" << e.what();
+                m_connected = false;
+                emit connectionStatusChanged(false);
+                emit connectionError(QString("Send error: %1").arg(e.what()));
+                break;
+            }
+        }
+        else {
+            // No images to send, sleep briefly
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    }
+
+    qDebug() << "Writer thread ended";
 }
 
 void OCRClient::processResults() {
