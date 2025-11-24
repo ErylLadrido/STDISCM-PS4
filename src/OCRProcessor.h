@@ -16,6 +16,8 @@ public:
     
 private:
     std::string postProcessText(const std::string& text);
+    std::string applyContextualReplacements(const std::string& text);
+    bool isLikelyGarbage(const std::string& text);
     Pix* cleanImage(const unsigned char* imageData, size_t dataSize);
     
     std::unique_ptr<tesseract::TessBaseAPI> m_tesseract;
