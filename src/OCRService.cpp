@@ -2,6 +2,7 @@
 #include <iostream>
 #include <mutex>
 #include <atomic>
+#include <chrono>
 
 // Global memory monitoring
 std::atomic<size_t> g_activeImageSize{0};
@@ -122,6 +123,10 @@ grpc::Status OCRServiceImpl::ProcessImages(
             std::string extractedText;
             
             try {
+                // ADDED: 1-second delay for testing continuous upload feature
+                std::cout << "Starting OCR processing for: " << filename << " (1 second delay for testing)" << std::endl;
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+                
                 extractedText = processor->processImage(imageData, filename);
             } catch (const std::exception& e) {
                 std::cerr << "Exception in OCR processing for " << filename << ": " << e.what() << std::endl;
