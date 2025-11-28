@@ -1,4 +1,4 @@
-﻿#include "MainWindow.h"
+#include "MainWindow.h"
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QScrollArea>
@@ -153,6 +153,9 @@ void MainWindow::onConnectClicked() {
         m_uploadButton->setEnabled(false);
         m_statusLabel->setText("Not connected");
         m_statusLabel->setStyleSheet("color: red; font-weight: bold; padding: 5px;");
+
+        // Reset batch state when disconnecting
+        clearResults();
     }
     else {
         // Connect
@@ -181,11 +184,6 @@ void MainWindow::onUploadClicked() {
         return;
     }
 
-    // If batch was completed (100%), start a new batch
-    if (m_completedImages == m_totalImages && m_totalImages > 0) {
-        clearResults();
-    }
-
     QStringList filePaths = QFileDialog::getOpenFileNames(
         this,
         "Select Images",
@@ -197,7 +195,19 @@ void MainWindow::onUploadClicked() {
         return;
     }
 
-    m_batchInProgress = true;
+    // CRITICAL FIX: Check if we should start a new batch
+    // Capture the state at the moment files are selected
+    bool shouldStartNewBatch = (m_completedImages == m_totalImages && m_totalImages > 0);
+
+    if (shouldStartNewBatch) {
+        // All previous images are done - start fresh batch
+        clearResults();
+        qDebug() << "Starting new batch - previous batch completed";
+    }
+    else {
+        // Continue with current batch
+        qDebug() << "Adding to current batch - Progress:" << m_completedImages << "/" << m_totalImages;
+    }
 
     for (const QString& filePath : filePaths) {
         QFile file(filePath);
@@ -221,7 +231,11 @@ void MainWindow::onUploadClicked() {
         m_totalImages++;
     }
 
+    // Update batch state and progress
+    m_batchInProgress = (m_completedImages < m_totalImages);
     updateProgressBar();
+
+    qDebug() << "Batch state - Total:" << m_totalImages << "Completed:" << m_completedImages << "InProgress:" << m_batchInProgress;
 }
 
 void MainWindow::onResultReceived(QString imageId, QString extractedText, bool success, QString errorMessage) {
@@ -229,7 +243,12 @@ void MainWindow::onResultReceived(QString imageId, QString extractedText, bool s
     if (it != m_imageWidgets.end()) {
         it.value()->setResult(extractedText, success, errorMessage);
         m_completedImages++;
+
+        // Update batch state
+        m_batchInProgress = (m_completedImages < m_totalImages);
         updateProgressBar();
+
+        qDebug() << "Result received - Completed:" << m_completedImages << "/" << m_totalImages << "BatchInProgress:" << m_batchInProgress;
     }
 }
 
@@ -238,14 +257,14 @@ void MainWindow::onConnectionStatusChanged(bool connected) {
         m_statusLabel->setText("✓ Connected to server");
         m_statusLabel->setStyleSheet("color: green; font-weight: bold; padding: 5px;");
         m_connectButton->setText("Disconnect");
-        m_uploadButton->setEnabled(true);
+        m_uploadButton->setEnabled(true);  // Keep upload button enabled when connected
         m_serverAddressInput->setEnabled(false);
     }
     else {
         m_statusLabel->setText("✗ Disconnected from server");
         m_statusLabel->setStyleSheet("color: red; font-weight: bold; padding: 5px;");
         m_connectButton->setText("Connect");
-        m_uploadButton->setEnabled(false);
+        m_uploadButton->setEnabled(false);  // Only disable when disconnected
         m_serverAddressInput->setEnabled(true);
     }
 }
@@ -281,6 +300,8 @@ void MainWindow::clearResults() {
     m_completedImages = 0;
     m_batchInProgress = false;
     updateProgressBar();
+
+    qDebug() << "Results cleared - starting fresh batch";
 }
 
 void MainWindow::addImageToGrid(const QString& imageId, const QString& filename) {
